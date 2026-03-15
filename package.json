@@ -1,0 +1,26 @@
+{
+  "name": "cdpx",
+  "version": "0.1.1",
+  "description": "AI browser automation platform — control Chromium via REST API",
+  "type": "module",
+  "scripts": {
+    "dev": "cd web && bun --watch server.ts",
+    "start": "pm2 start ecosystem.config.cjs",
+    "stop": "pm2 stop cdpx",
+    "restart": "pm2 restart cdpx",
+    "logs": "pm2 logs cdpx",
+    "test": "bun test tests/api.test.ts",
+    "check": "tsc --noEmit"
+  },
+  "keywords": ["browser", "automation", "ai", "cdp", "chrome-devtools-protocol", "rest-api", "chromium"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mawom/cdpx"
+  },
+  "homepage": "https://github.com/mawom/cdpx#readme",
+  "bugs": "https://github.com/mawom/cdpx/issues",
+  "devDependencies": {
+    "@types/bun": "^1.3.10"
+  }
+}

@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDPX</title>
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, "Helvetica Neue", sans-serif; background: #0f1117; color: #e1e4e8; min-height: 100vh; }
+
+  .header { padding: 20px 24px; border-bottom: 1px solid #21262d; display: flex; align-items: center; gap: 10px; }
+  .header img { width: 28px; height: 28px; }
+  .header h1 { font-size: 18px; font-weight: 600; }
+  .header h1 span { color: #58a6ff; }
+
+  .content { padding: 20px 24px; max-width: 960px; margin: 0 auto; }
+
+  .card { background: #161b22; border: 1px solid #21262d; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .card h3 { font-size: 12px; color: #8b949e; margin-bottom: 10px; text-transform: uppercase; letter-spacing: .5px; }
+
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .controls input { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; color: #e1e4e8; font-size: 14px; min-width: 0; }
+  .controls input#ports { width: 140px; flex-shrink: 0; }
+  .controls input#proxy { flex: 1; min-width: 180px; }
+  .controls input::placeholder { color: #484f58; }
+
+  .btn { padding: 8px 14px; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500; transition: all .15s; white-space: nowrap; }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { background: #da3633; color: #fff; }
+  .btn-danger:hover { background: #f85149; }
+  .btn-outline { background: transparent; border: 1px solid #30363d; color: #8b949e; }
+  .btn-outline:hover { border-color: #58a6ff; color: #58a6ff; }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+  .btn:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+
+  /* Instance list */
+  .inst-list { display: flex; flex-direction: column; gap: 8px; }
+  .inst-card { background: #0d1117; border: 1px solid #21262d; border-radius: 6px; padding: 12px; }
+  .inst-header { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .inst-port { font-size: 16px; font-weight: 600; font-family: monospace; color: #58a6ff; }
+  .inst-pid { font-size: 12px; color: #484f58; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 500; }
+  .badge-green { background: #12261e; color: #3fb950; }
+  .inst-proxy { font-size: 11px; color: #484f58; font-family: monospace; }
+  .inst-actions { margin-left: auto; display: flex; gap: 4px; }
+
+  /* Tabs panel */
+  .tabs-panel { margin-top: 12px; padding-top: 12px; border-top: 1px solid #21262d; }
+  .tab-open-bar { display: flex; gap: 8px; margin-bottom: 10px; }
+  .tab-open-bar input { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 6px 10px; color: #e1e4e8; font-size: 13px; flex: 1; min-width: 0; }
+  .tab-open-bar input::placeholder { color: #484f58; }
+
+  .tab-item { padding: 10px 0; border-bottom: 1px solid #161b22; }
+  .tab-item:last-child { border-bottom: none; }
+  .tab-head { display: flex; align-items: flex-start; gap: 8px; }
+  .tab-info { flex: 1; min-width: 0; }
+  .tab-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tab-url { font-size: 11px; color: #484f58; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+  .tab-actions { display: flex; gap: 4px; flex-shrink: 0; }
+  .tab-thumb-wrap { margin-top: 8px; }
+  .tab-thumb { width: 100%; max-width: 480px; border-radius: 6px; border: 1px solid #21262d; cursor: pointer; transition: opacity .15s; }
+  .tab-thumb:hover { opacity: .85; }
+  .tab-loading { color: #484f58; font-size: 12px; }
+
+  .empty { color: #484f58; font-size: 14px; padding: 16px 0; text-align: center; }
+
+  /* Modal */
+  .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,.85); display: flex; align-items: center; justify-content: center; z-index: 100; cursor: pointer; }
+  .modal-overlay img { max-width: 95vw; max-height: 95vh; border-radius: 8px; }
+
+  /* Toast */
+  .toast-container { position: fixed; top: 16px; right: 16px; z-index: 200; display: flex; flex-direction: column; gap: 6px; }
+  .toast { padding: 8px 16px; border-radius: 6px; font-size: 13px; animation: fadeInOut 2.5s ease forwards; pointer-events: none; }
+  .toast-success { background: #12261e; color: #3fb950; border: 1px solid #238636; }
+  .toast-error { background: #2d1215; color: #f85149; border: 1px solid #da3633; }
+  @keyframes fadeInOut { 0% { opacity: 0; transform: translateY(-8px); } 10% { opacity: 1; transform: translateY(0); } 80% { opacity: 1; } 100% { opacity: 0; } }
+
+
+  /* Mobile */
+  @media (max-width: 600px) {
+    .content { padding: 12px; }
+    .card { padding: 12px; }
+    .controls { gap: 6px; }
+    .controls input#ports { width: 100px; }
+    .controls input#proxy { min-width: 140px; }
+    .btn { padding: 8px 10px; font-size: 12px; }
+    .inst-header { gap: 6px; }
+    .inst-actions { margin-left: 0; width: 100%; justify-content: flex-end; }
+    .tab-thumb { max-width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <img src="/logo.svg" alt="CDPX">
+  <h1><span>CDPX</span> Console</h1>
+  <a id="btn-docs" href="/api/browser/docs" target="_blank" class="btn btn-outline btn-sm" style="margin-left:auto">Docs</a>
+  <button class="btn btn-outline btn-sm" onclick="shareLink()">🔗</button>
+  <button class="btn btn-outline btn-sm" onclick="toggleLang()" id="btn-lang">EN</button>
+</div>
+
+<div class="content">
+  <div class="card">
+    <h3 data-i18n="launch">启动实例</h3>
+    <div class="controls">
+      <input type="text" id="ports" data-i18n-ph="port_ph" placeholder="端口，如 9222">
+      <input type="text" id="proxy" data-i18n-ph="proxy_ph" placeholder="代理（可选），如 socks5://127.0.0.1:1080">
+      <button class="btn btn-primary" id="btn-start" onclick="startBrowser()" data-i18n="start_btn">启动/连接</button>
+      <button class="btn btn-danger" id="btn-stop-all" onclick="stopAll()" data-i18n="stop_all">全部停止</button>
+      <button class="btn btn-outline" onclick="refresh()" data-i18n="refresh">刷新</button>
+    </div>
+    <div class="controls" style="margin-top:6px">
+      <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="opt-stealth" checked> <span data-i18n="stealth_label">反检测</span>
+      </label>
+      <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="opt-fingerprint"> <span data-i18n="fingerprint_label">随机指纹</span>
+      </label>
+      <label style="font-size:12px;color:#8b949e;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="opt-headless"> <span data-i18n="headless_label">Headless</span>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="running">运行中的实例</h3>
+    <div id="instances"></div>
+  </div>
+
+</div>
+
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+const _token = window.__CDPX_TOKEN || '';
+const _authQ = _token ? 'token=' + _token : '';
+
+// WS-first API: send via WebSocket, fallback to HTTP if WS not connected
+let _wsReqId = 0;
+const _wsPending = new Map();
+
+function api(path, method = 'GET', body) {
+  // Try WS first
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    return new Promise((resolve, reject) => {
+      const id = ++_wsReqId;
+      const timer = setTimeout(() => { _wsPending.delete(id); reject(new Error('ws timeout')); }, 15000);
+      _wsPending.set(id, (result) => { clearTimeout(timer); resolve(result); });
+      ws.send(JSON.stringify({ id, method, path, body }));
+    });
+  }
+  // Fallback to HTTP
+  const opts = { method };
+  if (body) {
+    opts.headers = { 'Content-Type': 'application/json' };
+    opts.body = JSON.stringify(body);
+  }
+  const sep = path.includes('?') ? '&' : '?';
+  return fetch('/api/browser' + path + (_authQ ? sep + _authQ : ''), opts).then(r => r.json());
+}
+
+const expandedPorts = new Set();
+
+async function refresh() {
+  try {
+    const data = await api('/status');
+    renderInstances(data.instances || []);
+  } catch {
+    document.getElementById('instances').innerHTML = '<div class="empty">' + t('conn_fail') + '</div>';
+  }
+}
+
+const _lastToast = new Map();
+function toast(msg, type = 'success') {
+  const key = type + ':' + msg;
+  const now = Date.now();
+  if (_lastToast.has(key) && now - _lastToast.get(key) < 3000) return;
+  _lastToast.set(key, now);
+  if (_lastToast.size > 50) {
+    for (const [k, t] of _lastToast) { if (now - t > 5000) _lastToast.delete(k); }
+  }
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), 2600);
+}
+
+function setLoading(btnId, loading) {
+  const btn = document.getElementById(btnId);
+  if (btn) btn.disabled = loading;
+}
+
+async function startBrowser() {
+  const input = document.getElementById('ports').value.trim();
+  const proxy = document.getElementById('proxy').value.trim() || undefined;
+  const ports = input ? input.split(/[\s,]+/).map(Number).filter(Boolean) : [9222];
+  for (const p of ports) {
+    if (!p || p < 1024 || p > 65535 || !Number.isInteger(p) || p === parseInt(location.port) || p === parseInt(location.port) + 1) {
+      toast(t('port_err'), 'error');
+      return;
+    }
+  }
+  setLoading('btn-start', true);
+  try {
+    // Try connect first per port, start remaining
+    const toStart = [];
+    for (const port of ports) {
+      const conn = await api('/connect', 'POST', { port });
+      if (conn.connected) {
+        toast(`${t('connected')} :${port} (${conn.tabs} tabs)`);
+      } else {
+        toStart.push(port);
+      }
+    }
+    if (toStart.length > 0) {
+      const body = { ports: toStart };
+      if (proxy) body.proxy = proxy;
+      body.stealth = document.getElementById('opt-stealth').checked;
+      if (document.getElementById('opt-fingerprint').checked) body.fingerprint = 'random';
+      if (document.getElementById('opt-headless').checked) body.headless = true;
+      const data = await api('/start', 'POST', body);
+      if (data.error) { toast(data.error, 'error'); return; }
+      toast(`${t('started')} (${toStart.length})`);
+    }
+    document.getElementById('ports').value = '';
+  } catch { toast(t('start_fail'), 'error'); }
+  finally { setLoading('btn-start', false); }
+}
+
+async function stopOne(port) {
+  try {
+    await api('/stop', 'POST', { port });
+    toast(t('stopped') + ' :' + port);
+  } catch { toast(t('stop_fail'), 'error'); }
+}
+
+async function restartOne(port) {
+  const proxy = prompt(t('proxy_prompt'), '');
+  if (proxy === null) return;
+  const body = { port };
+  if (proxy.trim()) body.proxy = proxy.trim();
+  try {
+    const data = await api('/restart', 'POST', body);
+    if (data.error) { toast(data.error, 'error'); return; }
+    toast(t('restarted') + ' :' + port);
+  } catch { toast(t('restart_fail'), 'error'); }
+}
+
+async function stopAll() {
+  setLoading('btn-stop-all', true);
+  try {
+    const data = await api('/stop-all', 'POST');
+    toast(t('stopped') + ' ' + (data.stopped || 0));
+  } catch { toast(t('stop_fail'), 'error'); }
+  finally { setLoading('btn-stop-all', false); }
+}
+
+async function toggleTabs(port) {
+  if (expandedPorts.has(port)) {
+    expandedPorts.delete(port);
+  } else {
+    expandedPorts.add(port);
+  }
+  refresh();
+}
+
+async function loadTabs(port) {
+  const el = document.getElementById('tabs-' + port);
+  if (!el) return;
+  // preserve user input in open-url field
+  const urlInput = document.getElementById('open-url-' + port);
+  const savedUrl = urlInput ? urlInput.value : '';
+  el.innerHTML = '<span class="tab-loading">' + t('loading') + '</span>';
+
+  const data = await api('/tabs?port=' + port);
+  const tabs = data.tabs || [];
+
+  let html = `<div class="tab-open-bar">
+    <input type="text" id="open-url-${port}" placeholder="${t('open_ph')}" onkeydown="if(event.key==='Enter')openTab(${port})">
+    <button class="btn btn-primary btn-sm" onclick="openTab(${port})">${t('open_btn')}</button>
+  </div>`;
+
+  if (tabs.length === 0) {
+    html += '<span class="tab-loading">' + t('no_pages') + '</span>';
+    el.innerHTML = html;
+    return;
+  }
+
+  for (const tab of tabs) {
+    html += `<div class="tab-item">
+      <div class="tab-head">
+        <div class="tab-info">
+          <div class="tab-title">${esc(tab.title || (_lang === 'zh' ? '(无标题)' : '(untitled)'))}</div>
+          <div class="tab-url">${esc(tab.url)}${tab.proxy ? ' <span class="inst-proxy">' + esc(tab.proxy) + '</span>' : ''}</div>
+        </div>
+        <div class="tab-actions">
+          <button class="btn btn-outline btn-sm" onclick="navigateTab(${port},'${tab.id}')">${t('nav_btn')}</button>
+          <button class="btn btn-outline btn-sm" onclick="loadScreenshot(${port},'${tab.id}')">🔄</button>
+          <button class="btn btn-danger btn-sm" onclick="closeTab(${port},'${tab.id}')">${t('close_btn')}</button>
+        </div>
+      </div>
+      <div class="tab-thumb-wrap" id="thumb-${port}-${tab.id}"><span class="tab-loading">${t('screenshot_loading')}</span></div>
+    </div>`;
+  }
+  el.innerHTML = html;
+
+  // restore user input
+  if (savedUrl) {
+    const restored = document.getElementById('open-url-' + port);
+    if (restored) restored.value = savedUrl;
+  }
+
+  for (const tab of tabs) {
+    loadScreenshot(port, tab.id);
+  }
+}
+
+async function loadScreenshot(port, tabId) {
+  const el = document.getElementById('thumb-' + port + '-' + tabId);
+  if (!el) return;
+  try {
+    const data = await api('/screenshot?port=' + port + '&id=' + tabId);
+    if (data.image) {
+      el.innerHTML = `<img class="tab-thumb" src="data:image/jpeg;base64,${data.image}" onclick="showFull(this.src)">`;
+    } else {
+      el.innerHTML = '<span class="tab-loading">' + t('screenshot_fail') + '</span>';
+    }
+  } catch {
+    el.innerHTML = '<span class="tab-loading">' + t('screenshot_fail') + '</span>';
+  }
+}
+
+async function openTab(port) {
+  const input = document.getElementById('open-url-' + port);
+  const url = input.value.trim();
+  if (!url) { toast(t('url_empty'), 'error'); return; }
+  try {
+    const data = await api('/open', 'POST', { port, url });
+    if (data.error) { toast(data.error, 'error'); return; }
+    toast(t('opened'));
+    input.value = '';
+    loadTabs(port);
+  } catch { toast(t('open_fail'), 'error'); }
+}
+
+async function navigateTab(port, tabId) {
+  const url = prompt(t('nav_prompt'), '');
+  if (url === null) return;
+  if (!url.trim()) { toast(t('url_required'), 'error'); return; }
+  try {
+    const data = await api('/cdp', 'POST', { port, tabId, method: 'Page.navigate', params: { url: url.trim() } });
+    if (data.error) { toast(String(data.error), 'error'); return; }
+    toast(t('nav_done'));
+    setTimeout(() => loadTabs(port), 1000);
+  } catch { toast(t('nav_fail'), 'error'); }
+}
+
+async function closeTab(port, tabId) {
+  try {
+    await api('/close-tab', 'POST', { port, tabId });
+    toast(t('close_done'));
+    loadTabs(port);
+  } catch { toast(t('close_fail'), 'error'); }
+}
+
+function showFull(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  const img = document.createElement('img');
+  img.src = src;
+  overlay.appendChild(img);
+  overlay.onclick = () => overlay.remove();
+  document.body.appendChild(overlay);
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// WebSocket for real-time status updates, fallback to polling
+let ws, wsRetry = 0;
+function connectWS() {
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(proto + '//' + location.host + '/ws' + (_authQ ? '?' + _authQ : ''));
+  ws.onopen = () => { wsRetry = 0; };
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      // Server push (status broadcast)
+      if (msg.type === 'status') { renderInstances(msg.instances || []); return; }
+      // API response (id + result or error)
+      if (msg.id && _wsPending.has(msg.id)) {
+        const cb = _wsPending.get(msg.id);
+        _wsPending.delete(msg.id);
+        cb(msg.result || msg.error || {});
+      }
+    } catch {}
+  };
+  ws.onclose = () => {
+    wsRetry = Math.min(wsRetry + 1, 5);
+    setTimeout(connectWS, wsRetry * 2000);
+  };
+}
+
+function renderInstances(list) {
+  const el = document.getElementById('instances');
+  if (list.length === 0) {
+    el.innerHTML = '<div class="empty">' + t('no_instance') + '</div>';
+    return;
+  }
+  let html = '<div class="inst-list">';
+  for (const inst of list) {
+    const expanded = expandedPorts.has(inst.port);
+    html += `<div class="inst-card">
+      <div class="inst-header">
+        <span class="inst-port">:${inst.port}</span>
+        <span class="inst-pid">PID ${inst.pid}</span>
+        <span class="badge badge-green">${t('running_badge')}</span>
+        ${inst.proxy ? `<span class="inst-proxy">${esc(inst.proxy)}</span>` : ''}
+        ${inst.stealth ? `<span class="badge" style="background:#1a2332;color:#58a6ff">${t('stealth_label')}</span>` : ''}
+        ${inst.headless ? `<span class="badge" style="background:#1a2332;color:#d2a8ff">${t('headless_label')}</span>` : ''}
+        ${inst.fingerprint ? `<span class="badge" style="background:#1a2332;color:#3fb950">${t('fingerprint_label')}</span>` : ''}
+        <div class="inst-actions">
+          <button class="btn btn-outline btn-sm" onclick="toggleTabs(${inst.port})">${expanded ? t('collapse') : t('view')}</button>
+          <button class="btn btn-outline btn-sm" onclick="restartOne(${inst.port})">${t('restart')}</button>
+          <button class="btn btn-danger btn-sm" onclick="stopOne(${inst.port})">${t('stop')}</button>
+        </div>
+      </div>
+      <div id="tabs-row-${inst.port}" style="display:${expanded ? 'block' : 'none'}">
+        <div class="tabs-panel" id="tabs-${inst.port}"><span class="tab-loading">${t('loading')}</span></div>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+  el.innerHTML = html;
+  for (const port of expandedPorts) {
+    if (list.some(i => i.port === port)) loadTabs(port);
+    else expandedPorts.delete(port);
+  }
+}
+
+// ─── i18n ────────────────────────────────────────
+const I18N = {
+  zh: {
+    launch: '启动实例', port_ph: '端口，如 9222', proxy_ph: '代理（可选），如 socks5://127.0.0.1:1080',
+    start_btn: '启动/连接', stop_all: '全部停止', refresh: '刷新',
+    running: '运行中的实例', api_docs: 'API 文档', no_instance: '暂无运行中的实例',
+    conn_fail: '连接失败', view: '查看', collapse: '收起', restart: '重启', stop: '停止',
+    loading: '加载中...', no_pages: '无打开的页面', open_ph: '输入 URL 打开新标签页',
+    open_btn: '打开', nav_btn: '导航', close_btn: '关闭', screenshot_loading: '截图加载中...',
+    screenshot_fail: '截图失败', started: '实例已启动', stopped: '已停止',
+    connected: '已连接', start_fail: '启动失败', stop_fail: '停止失败',
+    restart_fail: '重启失败', open_fail: '打开失败', nav_fail: '导航失败',
+    close_done: '标签页已关闭', close_fail: '关闭失败',
+    port_err: '端口号须为 1024-65535 的整数，且不能与服务端口冲突', url_empty: '请输入 URL', url_required: 'URL 不能为空',
+    nav_done: '已导航', opened: '已打开', restarted: '已重启',
+    proxy_prompt: '输入代理地址（留空则不使用代理）：', nav_prompt: '输入目标 URL：',
+    running_badge: '运行中',
+    stealth_label: '反检测', fingerprint_label: '随机指纹', headless_label: 'Headless',
+  },
+  en: {
+    launch: 'Launch Instance', port_ph: 'Port, e.g. 9222', proxy_ph: 'Proxy (optional), e.g. socks5://127.0.0.1:1080',
+    start_btn: 'Start/Connect', stop_all: 'Stop All', refresh: 'Refresh',
+    running: 'Running Instances', api_docs: 'API Docs', no_instance: 'No running instances',
+    conn_fail: 'Connection failed', view: 'View', collapse: 'Hide', restart: 'Restart', stop: 'Stop',
+    loading: 'Loading...', no_pages: 'No open pages', open_ph: 'Enter URL to open new tab',
+    open_btn: 'Open', nav_btn: 'Navigate', close_btn: 'Close', screenshot_loading: 'Loading screenshot...',
+    screenshot_fail: 'Screenshot failed', started: 'Instance started', stopped: 'Stopped',
+    connected: 'Connected', start_fail: 'Start failed', stop_fail: 'Stop failed',
+    restart_fail: 'Restart failed', open_fail: 'Open failed', nav_fail: 'Navigate failed',
+    close_done: 'Tab closed', close_fail: 'Close failed',
+    port_err: 'Port must be 1024-65535 and not conflict with server ports', url_empty: 'Enter URL', url_required: 'URL required',
+    nav_done: 'Navigated', opened: 'Opened', restarted: 'Restarted',
+    proxy_prompt: 'Enter proxy address (leave empty for none):', nav_prompt: 'Enter target URL:',
+    running_badge: 'Running',
+    stealth_label: 'Anti-detection', fingerprint_label: 'Random fingerprint', headless_label: 'Headless',
+  },
+};
+
+let _lang = localStorage.getItem('CDPX_lang') || 'zh';
+function t(key) { return I18N[_lang]?.[key] || I18N.zh[key] || key; }
+
+function applyLang() {
+  // Static UI elements
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-ph]').forEach(el => { el.placeholder = t(el.dataset.i18nPh); });
+  document.getElementById('btn-lang').textContent = _lang === 'zh' ? 'EN' : '中';
+  document.getElementById('btn-docs').href = _lang === 'zh' ? '/api/browser/docs/zh' : '/api/browser/docs';
+}
+
+function toggleLang() {
+  _lang = _lang === 'zh' ? 'en' : 'zh';
+  localStorage.setItem('CDPX_lang', _lang);
+  applyLang();
+  refresh();
+}
+
+// ─── Share link ──────────────────────────────────
+function shareLink() {
+  const url = location.origin + '/?token=' + _token;
+  // Select all + copy in a temp input (works on HTTP, unlike clipboard API)
+  const input = document.createElement('input');
+  input.value = url;
+  document.body.appendChild(input);
+  input.select();
+  const ok = document.execCommand('copy');
+  document.body.removeChild(input);
+  if (ok) {
+    toast(_lang === 'zh' ? '链接已复制' : 'Link copied');
+  } else {
+    prompt(_lang === 'zh' ? '复制此链接：' : 'Copy this link:', url);
+  }
+}
+
+applyLang();
+connectWS();
+let fallbackTimer = setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) refresh();
+}, 10000);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) { connectWS(); }
+    refresh();
+  }
+});
+refresh();
+</script>
+</body>
+</html>

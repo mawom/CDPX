@@ -1,0 +1,7 @@
+node_modules/
+browser/
+*.pid
+*.log
+.DS_Store
+.claude/
+.token
