@@ -8,6 +8,7 @@ import {
   type Instance, type StartOpts,
 } from "./shared.ts";
 import { getExtensionLoadArg } from "./extension.ts";
+import { coverageSessions } from "./perf.ts";
 import { networkMonitors, consoleMonitors, downloadMonitors } from "./monitor.ts";
 
 // Anti-detection flags — mimic normal user browser, hide automation signals
@@ -78,12 +79,20 @@ if (!window.__cdpxPermPatched) {
 }
 `;
 
+const _startingPorts = new Set<number>();
+
 export function startInstance(port: number, opts?: StartOpts): Instance {
   const proxy = opts?.proxy;
   const headless = opts?.headless ?? false;
   const stealth = opts?.stealth ?? true;
 
   ensureDirs();
+
+  // Prevent concurrent starts on the same port
+  if (_startingPorts.has(port)) {
+    return { port, pid: 0, running: false } as Instance;
+  }
+  _startingPorts.add(port);
 
   // check if already running
   const pf = pidFile(port);
@@ -134,11 +143,12 @@ export function startInstance(port: number, opts?: StartOpts): Instance {
 
   child.unref();
   const pid = child.pid;
-  if (!pid) return { port, pid: 0, running: false };
+  if (!pid) { _startingPorts.delete(port); return { port, pid: 0, running: false }; }
   fs.writeFileSync(pf, String(pid));
   const existingMeta = loadMeta(port);
   saveMeta(port, { ...existingMeta, proxy: proxy || null, headless, stealth, fingerprint: opts?.fingerprint || null });
 
+  _startingPorts.delete(port);
   return { port, pid, running: true, proxy };
 }
 
@@ -206,41 +216,66 @@ export async function injectProxyAuth(port: number, proxy: string): Promise<void
     const ws = new WebSocket(webSocketDebuggerUrl);
     await new Promise<void>((resolve) => {
       let nextId = 1;
+      const attachedSessions = new Set<string>();
+      const pendingFetchEnable = new Map<number, string>(); // cmdId → sessionId
+
       ws.onopen = () => {
-        // Enable Fetch domain to intercept auth challenges
-        ws.send(JSON.stringify({ id: nextId++, method: "Fetch.enable", params: {
-          handleAuthRequests: true,
-        }}));
+        // Auth-only Fetch: patterns:[] = don't intercept regular requests, only auth challenges
+        // This avoids conflicting with Playwright's page.route() request interception
+        ws.send(JSON.stringify({ id: nextId++, method: "Fetch.enable", params: { handleAuthRequests: true, patterns: [] } }));
+        // Auto-attach to new page targets — pause them until Fetch auth is ready
+        ws.send(JSON.stringify({ id: nextId++, method: "Target.setAutoAttach", params: {
+          autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+        } }));
       };
       ws.onmessage = (ev: MessageEvent) => {
         try {
           const msg = JSON.parse(String(ev.data));
-          // Handle proxy auth challenge
+
+          // New target attached — only enable Fetch auth on page targets
+          if (msg.method === "Target.attachedToTarget" && msg.params?.sessionId) {
+            const sid = msg.params.sessionId;
+            const type = msg.params.targetInfo?.type;
+            if (!attachedSessions.has(sid) && (type === "page" || type === "other")) {
+              attachedSessions.add(sid);
+              const fetchId = nextId++;
+              pendingFetchEnable.set(fetchId, sid);
+              ws.send(JSON.stringify({ id: fetchId, method: "Fetch.enable", params: { handleAuthRequests: true, patterns: [] }, sessionId: sid }));
+            } else if (!attachedSessions.has(sid)) {
+              // Non-page target (service_worker, iframe, etc.) — just resume without Fetch
+              attachedSessions.add(sid);
+              ws.send(JSON.stringify({ id: nextId++, method: "Runtime.runIfWaitingForDebugger", sessionId: sid }));
+            }
+          }
+
+          // Target detached — clean up stale session
+          if (msg.method === "Target.detachedFromTarget" && msg.params?.sessionId) {
+            attachedSessions.delete(msg.params.sessionId);
+          }
+
+          // Fetch.enable confirmed — NOW safe to resume the target
+          if (msg.id && pendingFetchEnable.has(msg.id)) {
+            const sid = pendingFetchEnable.get(msg.id)!;
+            pendingFetchEnable.delete(msg.id);
+            ws.send(JSON.stringify({ id: nextId++, method: "Runtime.runIfWaitingForDebugger", sessionId: sid }));
+          }
+
+          // Handle proxy auth challenge — auth-only, no Fetch.requestPaused needed
           if (msg.method === "Fetch.authRequired") {
-            ws.send(JSON.stringify({
+            const resp: any = {
               id: nextId++,
               method: "Fetch.continueWithAuth",
               params: {
                 requestId: msg.params.requestId,
-                authChallengeResponse: {
-                  response: "ProvideCredentials",
-                  username,
-                  password,
-                },
+                authChallengeResponse: { response: "ProvideCredentials", username, password },
               },
-            }));
-          }
-          // Let non-auth requests continue normally
-          if (msg.method === "Fetch.requestPaused" && !msg.params.responseStatusCode) {
-            ws.send(JSON.stringify({
-              id: nextId++,
-              method: "Fetch.continueRequest",
-              params: { requestId: msg.params.requestId },
-            }));
+            };
+            if (msg.sessionId) resp.sessionId = msg.sessionId;
+            ws.send(JSON.stringify(resp));
           }
         } catch {}
       };
-      // Keep this connection alive (don't close it — auth challenges come at any time)
+      // Keep alive — reconnect on error
       ws.onerror = () => resolve();
       setTimeout(() => resolve(), 3000);
     });
@@ -279,6 +314,13 @@ export function stopInstance(port: number): boolean {
       downloadMonitors.delete(key);
     }
   }
+  // Close coverage sessions
+  for (const [key, handle] of coverageSessions) {
+    if (key.startsWith(`${port}:`)) {
+      try { handle.ws.close(); } catch {}
+      coverageSessions.delete(key);
+    }
+  }
 
   const pf = pidFile(port);
   let raw: string;
@@ -288,6 +330,10 @@ export function stopInstance(port: number): boolean {
     return false;
   }
   const pid = parseInt(raw, 10);
+  if (!isRunning(pid)) {
+    try { fs.unlinkSync(pf); } catch {}
+    return false;
+  }
   try {
     process.kill(-pid, "SIGTERM");
   } catch {
@@ -297,8 +343,8 @@ export function stopInstance(port: number): boolean {
   return true;
 }
 
-export function stopAll(): number {
-  const instances = getStatus();
+export async function stopAll(): Promise<number> {
+  const instances = await getStatus();
   let count = 0;
   for (const inst of instances) {
     if (stopInstance(inst.port)) count++;
@@ -306,29 +352,34 @@ export function stopAll(): number {
   return count;
 }
 
-export function getStatus(): Instance[] {
+export async function getStatus(): Promise<Instance[]> {
   ensureDirs();
   const files = fs.readdirSync(PIDS_DIR).filter((f) => f.endsWith(".pid"));
-  return files.flatMap((f) => {
+  const results: Instance[] = [];
+  await Promise.all(files.map(async (f) => {
     const port = parseInt(f.replace(".pid", ""), 10);
-    if (!Number.isFinite(port)) return [];
+    if (!Number.isFinite(port)) return;
     try {
       const pid = parseInt(fs.readFileSync(pidFile(port), "utf-8").trim(), 10);
       if (!isRunning(pid)) {
         try { fs.unlinkSync(pidFile(port)); } catch {}
         try { fs.unlinkSync(metaFile(port)); } catch {}
-        return [];
+        return;
       }
       const meta = loadMeta(port);
-      return [{
-        port, pid, running: true,
+      let cdpAvailable = false;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(1000) });
+        cdpAvailable = res.ok;
+      } catch {}
+      results.push({
+        port, pid, running: true, cdpAvailable,
         proxy: meta.proxy as string | undefined,
         stealth: !!meta.stealth,
         headless: !!meta.headless,
         fingerprint: meta.fingerprint as string | undefined,
-      }];
-    } catch {
-      return [];
-    }
-  });
+      });
+    } catch {}
+  }));
+  return results.sort((a, b) => a.port - b.port);
 }

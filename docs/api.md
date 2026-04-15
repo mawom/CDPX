@@ -423,6 +423,125 @@ Restarts the browser to load the extension.
 
 ---
 
+## Emulation
+
+### POST /api/browser/set-geolocation
+Override geolocation for a tab.
+```json
+{"port": 9222, "tabId": "ABC", "latitude": 35.6762, "longitude": 139.6503, "accuracy": 1}
+```
+
+### POST /api/browser/set-timezone
+```json
+{"port": 9222, "tabId": "ABC", "timezoneId": "Asia/Tokyo"}
+```
+
+### POST /api/browser/set-locale
+```json
+{"port": 9222, "tabId": "ABC", "locale": "ja-JP"}
+```
+
+### POST /api/browser/set-permissions
+```json
+{"port": 9222, "tabId": "ABC", "permissions": ["geolocation", "camera", "microphone"]}
+```
+
+### POST /api/browser/set-offline
+```json
+{"port": 9222, "tabId": "ABC", "offline": true}
+```
+
+### POST /api/browser/emulate-media
+```json
+{"port": 9222, "tabId": "ABC", "media": "print", "colorScheme": "dark"}
+```
+- `media`: `"screen"`, `"print"`, or `""` to reset
+- `colorScheme`: `"light"`, `"dark"`, `"no-preference"`
+
+### POST /api/browser/add-init-script
+Inject JavaScript that runs before any page script on every navigation.
+```json
+{"port": 9222, "tabId": "ABC", "script": "window.__INJECTED = true"}
+```
+Returns `{ok: true, identifier: "..."}`. Use identifier to remove later via CDP.
+
+---
+
+## Context Isolation
+
+### POST /api/browser/context/create
+Create an isolated BrowserContext (optional proxy).
+```json
+{"port": 9222, "proxy": "socks5://127.0.0.1:1080"}
+```
+Returns `{contextId: "XXXXXXXX"}`.
+
+### POST /api/browser/context/open
+Open a tab in an existing BrowserContext.
+```json
+{"port": 9222, "contextId": "XXXXXXXX", "url": "https://example.com"}
+```
+Returns `{tab: {id, url, ...}}`.
+
+### POST /api/browser/context/close
+Close a BrowserContext and all tabs in it.
+```json
+{"port": 9222, "contextId": "XXXXXXXX"}
+```
+
+---
+
+## Clear Cookies
+
+### POST /api/browser/clear-cookies
+Clear all browser cookies.
+```json
+{"port": 9222, "tabId": "ABC"}
+```
+
+---
+
+## Wait for Load State
+
+### POST /api/browser/wait-load
+Wait for page load state (`load` or `domcontentloaded`).
+```json
+{"port": 9222, "tabId": "ABC", "state": "load", "timeout": 30000}
+```
+
+---
+
+## CDP Reverse Proxy
+
+Expose Chrome's CDP to LAN. URLs are rewritten so `webSocketDebuggerUrl` points back to CDPX.
+
+| Path | Description |
+|------|-------------|
+| `GET /cdp/:port/json/version` | Browser info (rewrites WS URL) |
+| `GET /cdp/:port/json` | Tab list (rewrites WS URLs) |
+| `WS /cdp/:port/devtools/*` | Bidirectional CDP WebSocket proxy |
+
+Usage with Playwright:
+```python
+browser = playwright.chromium.connect_over_cdp("http://CDPX_IP:1024/cdp/9222?token=xxx")
+```
+
+---
+
+## Playwright Connect
+
+Built-in Playwright protocol adapter. Connect via `WS /pw/:port`.
+
+```python
+browser = playwright.chromium.connect("ws://CDPX_IP:1024/pw/9222?token=xxx")
+page = browser.new_context().new_page()
+page.goto("https://example.com")
+```
+
+Supports: `newContext`, `newPage`, `goto`, `click`, `fill`, `type`, `press`, `evaluate`, `screenshot`, `content`, `title`, `close`, `cookies`, `waitForSelector`, `setViewportSize`, and more.
+
+---
+
 ## Generic CDP
 
 ### POST /api/browser/cdp

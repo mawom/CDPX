@@ -45,7 +45,7 @@ snapshot?content=1  →  Confirm the result
 
 The **snapshot** returns a tree of interactive elements with `[ref=N]` IDs. Read the snapshot, pick an element by ref, and call click/type/select. No CSS selectors, no XPath, no browser SDK needed.
 
-## API Overview (~60 endpoints)
+## API Overview (80+ endpoints)
 
 ### Instance Management
 | Method | Path | Description |
@@ -86,6 +86,25 @@ The **snapshot** returns a tree of interactive elements with `[ref=N]` IDs. Read
 | POST | `/api/browser/fetch` | Authenticated fetch (uses browser cookies) |
 | POST | `/api/browser/mock` | Mock HTTP requests |
 | POST | `/api/browser/batch` | Execute multiple steps |
+| POST | `/api/browser/wait-load` | Wait for page load state `{state?}` |
+
+### Emulation
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/browser/set-geolocation` | Override geolocation `{latitude, longitude}` |
+| POST | `/api/browser/set-timezone` | Override timezone `{timezoneId}` |
+| POST | `/api/browser/set-locale` | Override locale `{locale}` |
+| POST | `/api/browser/set-permissions` | Grant permissions `{permissions: [...]}` |
+| POST | `/api/browser/set-offline` | Toggle offline mode `{offline}` |
+| POST | `/api/browser/emulate-media` | CSS media emulation `{media?, colorScheme?}` |
+| POST | `/api/browser/add-init-script` | Inject script on every navigation `{script}` |
+
+### Context Isolation
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/browser/context/create` | Create isolated BrowserContext `{port, proxy?}` |
+| POST | `/api/browser/context/open` | Open tab in context `{port, contextId, url?}` |
+| POST | `/api/browser/context/close` | Close context + all tabs `{port, contextId}` |
 
 ### Performance Analysis
 | Method | Path | Description |
@@ -111,6 +130,7 @@ The **snapshot** returns a tree of interactive elements with `[ref=N]` IDs. Read
 |--------|------|-------------|
 | GET | `/api/browser/cookies` | Get cookies |
 | POST | `/api/browser/set-cookie` | Set cookie |
+| POST | `/api/browser/clear-cookies` | Clear all cookies |
 | GET | `/api/browser/storage` | Read localStorage/sessionStorage |
 | POST | `/api/browser/storage/set` | Write storage |
 | GET | `/api/browser/session/export` | Export cookies + localStorage |
@@ -162,6 +182,30 @@ ws.onmessage = (e) => {
 
 Broadcasts on: start, stop, restart, open, close-tab, navigate, install/uninstall extension.
 
+## CDP Reverse Proxy
+
+Expose Chrome's CDP to LAN devices through CDPX. Compatible with Playwright `connect_over_cdp()`:
+
+```python
+browser = playwright.chromium.connect_over_cdp("http://CDPX_IP:1024/cdp/9222?token=xxx")
+```
+
+| Path | Description |
+|------|-------------|
+| `GET /cdp/:port/json/version` | Browser info (rewrites `webSocketDebuggerUrl`) |
+| `GET /cdp/:port/json` | Tab list (rewrites WS URLs) |
+| `WS /cdp/:port/devtools/*` | Bidirectional CDP WebSocket proxy |
+
+## Playwright Connect
+
+Full Playwright `connect()` support via built-in protocol adapter:
+
+```python
+browser = playwright.chromium.connect("ws://CDPX_IP:1024/pw/9222?token=xxx")
+page = browser.new_context().new_page()
+page.goto("https://example.com")
+```
+
 ## Architecture
 
 ```
@@ -178,18 +222,19 @@ cdpx/
 │   │   ├── monitor.ts   # Network/console/download capture
 │   │   ├── storage.ts   # Cookie/storage/session
 │   │   ├── extension.ts # Extension install/uninstall
-│   │   ├── proxy.ts     # Per-tab proxy
+│   │   ├── proxy.ts     # Per-tab proxy + context isolation
 │   │   ├── profile.ts   # Profile snapshots
 │   │   ├── perf.ts      # Performance tracing + coverage
+│   │   ├── playwright.ts # Playwright connect() protocol adapter
 │   │   └── batch.ts     # Batch execution
 │   └── public/          # Management UI
 └── browser/             # Runtime data (gitignored)
 ```
 
-- **Zero npm dependencies** — pure `node:http`, `node:crypto`, `node:child_process`
+- **Zero npm dependencies** — pure Bun APIs + `node:crypto`, `node:child_process`
 - **Raw CDP** — direct WebSocket to Chromium, no Puppeteer/Playwright layer
 - **Bun** — native TypeScript, fast startup, built-in test runner
-- **Modular** — 11 modules split by function, easy to hack
+- **Modular** — 13 modules split by function, easy to hack
 
 ## Requirements
 

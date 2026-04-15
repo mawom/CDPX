@@ -299,9 +299,9 @@ async function loadTabs(port) {
           <div class="tab-url">${esc(tab.url)}${tab.proxy ? ' <span class="inst-proxy">' + esc(tab.proxy) + '</span>' : ''}</div>
         </div>
         <div class="tab-actions">
-          <button class="btn btn-outline btn-sm" onclick="navigateTab(${port},'${tab.id}')">${t('nav_btn')}</button>
-          <button class="btn btn-outline btn-sm" onclick="loadScreenshot(${port},'${tab.id}')">🔄</button>
-          <button class="btn btn-danger btn-sm" onclick="closeTab(${port},'${tab.id}')">${t('close_btn')}</button>
+          <button class="btn btn-outline btn-sm" onclick="navigateTab(${port},${JSON.stringify(tab.id)})">${t('nav_btn')}</button>
+          <button class="btn btn-outline btn-sm" onclick="loadScreenshot(${port},${JSON.stringify(tab.id)})">🔄</button>
+          <button class="btn btn-danger btn-sm" onclick="closeTab(${port},${JSON.stringify(tab.id)})">${t('close_btn')}</button>
         </div>
       </div>
       <div class="tab-thumb-wrap" id="thumb-${port}-${tab.id}"><span class="tab-loading">${t('screenshot_loading')}</span></div>
@@ -405,6 +405,9 @@ function connectWS() {
     } catch {}
   };
   ws.onclose = () => {
+    // Reject all pending WS API calls
+    for (const [id, cb] of _wsPending) { cb({ error: 'connection closed' }); }
+    _wsPending.clear();
     wsRetry = Math.min(wsRetry + 1, 5);
     setTimeout(connectWS, wsRetry * 2000);
   };
@@ -428,6 +431,7 @@ function renderInstances(list) {
         ${inst.stealth ? `<span class="badge" style="background:#1a2332;color:#58a6ff">${t('stealth_label')}</span>` : ''}
         ${inst.headless ? `<span class="badge" style="background:#1a2332;color:#d2a8ff">${t('headless_label')}</span>` : ''}
         ${inst.fingerprint ? `<span class="badge" style="background:#1a2332;color:#3fb950">${t('fingerprint_label')}</span>` : ''}
+        ${inst.cdpAvailable !== false ? `<span class="badge" style="background:#12261e;color:#3fb950">CDP</span>` : `<span class="badge" style="background:#2d1215;color:#f85149">CDP ✗</span>`}
         <div class="inst-actions">
           <button class="btn btn-outline btn-sm" onclick="toggleTabs(${inst.port})">${expanded ? t('collapse') : t('view')}</button>
           <button class="btn btn-outline btn-sm" onclick="restartOne(${inst.port})">${t('restart')}</button>

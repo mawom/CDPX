@@ -4,6 +4,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import type { ServerWebSocket } from "bun";
 import { handleBrowserRoute, BROWSER_BIN, getStatus } from "./cdp/index.ts";
+import { pwOpen, pwMessage, pwClose } from "./cdp/playwright.ts";
 
 const PORT = parseInt(process.env.PORT || "1024", 10);
 
@@ -45,11 +46,13 @@ const MUTATION_ROUTES = new Set([
   "/api/browser/navigate", "/api/browser/install-extension", "/api/browser/uninstall-extension",
 ]);
 
-const wsClients = new Set<ServerWebSocket<unknown>>();
+type WsData = { type: "status" } | { type: "cdp-proxy"; wsUrl: string } | { type: "pw"; port: number };
+const wsClients = new Set<ServerWebSocket<WsData>>();
+const cdpProxies = new Map<ServerWebSocket<WsData>, { ws: WebSocket; queue: string[] }>();
 
-function broadcastStatus(): void {
+async function broadcastStatus(): Promise<void> {
   if (wsClients.size === 0) return;
-  const msg = JSON.stringify({ type: "status", instances: getStatus() });
+  const msg = JSON.stringify({ type: "status", instances: await getStatus() });
   for (const ws of wsClients) {
     try { ws.send(msg); } catch { wsClients.delete(ws); }
   }
@@ -87,13 +90,80 @@ async function handleFetch(req: Request, server: any) {
     return t === API_TOKEN;
   };
 
-  // WebSocket upgrade
+  // WebSocket upgrade — status push
   if (p === "/ws") {
     if (API_TOKEN && !checkToken()) {
       return Response.json({ error: "unauthorized" }, { status: 401, headers: CORS });
     }
-    if (server.upgrade(req)) return;
+    if (server.upgrade(req, { data: { type: "status" } as WsData })) return;
     return new Response("WebSocket upgrade failed", { status: 400, headers: CORS });
+  }
+
+  // Playwright connect() endpoint
+  const pwMatch = p.match(/^\/pw\/(\d+)$/);
+  if (pwMatch) {
+    const pwPort = parseInt(pwMatch[1]);
+    if (!pwPort || pwPort < 1 || pwPort > 65535) {
+      return Response.json({ error: "invalid port" }, { status: 400, headers: CORS });
+    }
+    if (API_TOKEN && !checkToken()) {
+      return Response.json({ error: "unauthorized" }, { status: 401, headers: CORS });
+    }
+    if (server.upgrade(req, { data: { type: "pw", port: pwPort } as WsData })) return;
+    return new Response("WebSocket upgrade failed", { status: 400, headers: CORS });
+  }
+
+  // CDP reverse proxy — Playwright compatible
+  // GET  /cdp/:port/json/version → proxy + rewrite webSocketDebuggerUrl
+  // GET  /cdp/:port/json         → proxy + rewrite webSocketDebuggerUrl per tab
+  // WS   /cdp/:port/devtools/*   → bidirectional proxy to Chrome
+  const cdpMatch = p.match(/^\/cdp\/(\d+)(\/.*)?$/);
+  if (cdpMatch) {
+    const cdpPort = parseInt(cdpMatch[1]);
+    const cdpPath = cdpMatch[2] || "";
+    if (!cdpPort || cdpPort < 1 || cdpPort > 65535) {
+      return Response.json({ error: "invalid port" }, { status: 400, headers: CORS });
+    }
+    if (API_TOKEN && !checkToken()) {
+      return Response.json({ error: "unauthorized" }, { status: 401, headers: CORS });
+    }
+
+    // WS upgrade for /devtools/* paths — validate path contains only safe chars
+    if (cdpPath.startsWith("/devtools/") && /^\/devtools\/[a-zA-Z0-9\-_\/]+$/.test(cdpPath)) {
+      const targetWsUrl = `ws://127.0.0.1:${cdpPort}${cdpPath}`;
+      if (server.upgrade(req, { data: { type: "cdp-proxy", wsUrl: targetWsUrl } as WsData })) return;
+      return new Response("WebSocket upgrade failed", { status: 400, headers: CORS });
+    }
+
+    // HTTP proxy for /json endpoints — exact match only (no double-slash bypass)
+    const normalizedCdpPath = cdpPath.replace(/\/+/g, "/");
+    if (normalizedCdpPath === "/json/version" || normalizedCdpPath === "/json" || normalizedCdpPath === "/json/list" || normalizedCdpPath === "") {
+      const chromePath = normalizedCdpPath || "/json/version";
+      try {
+        const chromeRes = await fetch(`http://127.0.0.1:${cdpPort}${chromePath}`, { signal: AbortSignal.timeout(5000) });
+        const data = await chromeRes.json() as any;
+        const host = req.headers.get("host") || `localhost:${PORT}`;
+        const proto = req.headers.get("x-forwarded-proto") === "https" ? "wss" : "ws";
+        const tokenQ = API_TOKEN ? `?token=${API_TOKEN}` : "";
+        const rewrite = (wsUrl: string) => {
+          const m = wsUrl.match(/^wss?:\/\/[^/]+(\/devtools\/.+)$/);
+          return m ? `${proto}://${host}/cdp/${cdpPort}${m[1]}${tokenQ}` : wsUrl;
+        };
+        if (Array.isArray(data)) {
+          for (const tab of data) {
+            if (tab.webSocketDebuggerUrl) tab.webSocketDebuggerUrl = rewrite(tab.webSocketDebuggerUrl);
+          }
+        } else if (data.webSocketDebuggerUrl) {
+          data.webSocketDebuggerUrl = rewrite(data.webSocketDebuggerUrl);
+        }
+        log("GET", p, 200, start);
+        return Response.json(data, { headers: CORS });
+      } catch {
+        return Response.json({ error: "browser not running on port " + cdpPort }, { status: 502, headers: CORS });
+      }
+    }
+
+    return Response.json({ error: "unknown cdp path" }, { status: 404, headers: CORS });
   }
 
   // CORS preflight
@@ -133,7 +203,7 @@ async function handleFetch(req: Request, server: any) {
       const status = result.status ?? 200;
       log(req.method!, p + url.search, status, start);
       if (req.method === "POST" && status < 400 && MUTATION_ROUTES.has(p)) {
-        broadcastStatus();
+        broadcastStatus().catch(() => {});
       }
       return Response.json(result, { status, headers: CORS });
     } catch (err: any) {
@@ -154,7 +224,7 @@ async function handleFetch(req: Request, server: any) {
         return new Response(`Unauthorized. Access: http://localhost:${PORT}/?token=YOUR_TOKEN`, { status: 401, headers: CORS });
       }
       let html = await Bun.file(filePath).text();
-      html = html.replace("<script>", `<script>window.__CDPX_TOKEN="${API_TOKEN}";`);
+      html = html.replace("<script>", `<script>window.__CDPX_TOKEN=${JSON.stringify(API_TOKEN)};`);
       log("GET", p, 200, start);
       return new Response(html, { headers: { "Content-Type": mime } });
     }
@@ -167,11 +237,54 @@ async function handleFetch(req: Request, server: any) {
 }
 
 const wsHandler = {
-  open(ws: ServerWebSocket<unknown>) {
-    wsClients.add(ws);
-    ws.send(JSON.stringify({ type: "status", instances: getStatus() }));
+  async open(ws: ServerWebSocket<WsData>) {
+    const data = ws.data;
+    if (data.type === "pw") {
+      pwOpen(ws, data.port);
+      return;
+    }
+    if (data.type === "status") {
+      wsClients.add(ws);
+      ws.send(JSON.stringify({ type: "status", instances: await getStatus() }));
+      return;
+    }
+    // cdp-proxy: connect to Chrome WS and bridge
+    const chromeWs = new WebSocket(data.wsUrl);
+    const proxy = { ws: chromeWs, queue: [] as string[] };
+    cdpProxies.set(ws, proxy);
+    chromeWs.onopen = () => {
+      for (const m of proxy.queue) chromeWs.send(m);
+      proxy.queue.length = 0;
+    };
+    chromeWs.onmessage = (e) => {
+      try { ws.send(e.data as string); } catch {}
+    };
+    chromeWs.onclose = () => {
+      cdpProxies.delete(ws);
+      try { ws.close(); } catch {}
+    };
+    chromeWs.onerror = () => {
+      cdpProxies.delete(ws);
+      try { ws.close(); } catch {}
+    };
   },
-  async message(ws: ServerWebSocket<unknown>, msg: string | Buffer) {
+  async message(ws: ServerWebSocket<WsData>, msg: string | Buffer) {
+    if (ws.data.type === "pw") {
+      pwMessage(ws, msg);
+      return;
+    }
+    if (ws.data.type === "cdp-proxy") {
+      const proxy = cdpProxies.get(ws);
+      if (!proxy) return;
+      const str = String(msg);
+      if (proxy.ws.readyState === WebSocket.OPEN) {
+        proxy.ws.send(str);
+      } else {
+        proxy.queue.push(str);
+      }
+      return;
+    }
+    // status WS — API call forwarding
     let reqId: number | undefined;
     try {
       const req = JSON.parse(String(msg)) as { id: number; method?: string; path?: string; body?: any };
@@ -183,7 +296,7 @@ const wsHandler = {
       ws.send(JSON.stringify({ id: req.id, result }));
       const p = "/api/browser" + req.path.split("?")[0];
       if (httpMethod === "POST" && (result.status ?? 200) < 400 && MUTATION_ROUTES.has(p)) {
-        broadcastStatus();
+        broadcastStatus().catch(() => {});
       }
     } catch (err: any) {
       if (reqId) {
@@ -191,7 +304,19 @@ const wsHandler = {
       }
     }
   },
-  close(ws: ServerWebSocket<unknown>) {
+  close(ws: ServerWebSocket<WsData>) {
+    if (ws.data.type === "pw") {
+      pwClose(ws);
+      return;
+    }
+    if (ws.data.type === "cdp-proxy") {
+      const proxy = cdpProxies.get(ws);
+      if (proxy) {
+        cdpProxies.delete(ws);
+        try { proxy.ws.close(); } catch {}
+      }
+      return;
+    }
     wsClients.delete(ws);
   },
 };
@@ -223,4 +348,6 @@ if (API_TOKEN) {
 } else {
   console.log(`  \x1b[2m➜\x1b[0m  Auth:    \x1b[33mdisabled (--no-auth)\x1b[0m`);
 }
+console.log(`  \x1b[2m➜\x1b[0m  CDP:     \x1b[2m/cdp/{port}/json/version\x1b[0m`);
+console.log(`  \x1b[2m➜\x1b[0m  PW:      \x1b[2m/pw/{port}  (Playwright connect)\x1b[0m`);
 console.log();

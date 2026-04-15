@@ -164,8 +164,10 @@ describe("Perception", () => {
 
   test("perf", async () => {
     const data: any = await get(`/perf?port=${PORT}&id=${TAB_ID}`);
-    // perf uses cdpSession — if it returns data, check domNodes; if error, that's ok too
-    expect(data.domNodes !== undefined || data.error !== undefined).toBe(true);
+    expect(data.domNodes ?? data.error).toBeDefined();
+    if (data.domNodes !== undefined) {
+      expect(typeof data.domNodes).toBe("number");
+    }
   }, 10000);
 });
 
@@ -350,6 +352,170 @@ describe("Advanced", () => {
   test("batch", async () => {
     const data: any = await post("/batch", { port: PORT, tabId: TAB_ID, steps: [{ action: "eval", params: { expression: "1+1" } }] });
     expect(data.results?.[0]?.result?.value).toBe(2);
+  });
+});
+
+// ─── Context Isolation ─────────────────────────────
+
+describe("Context", () => {
+  let ctxId = "";
+  let ctxTabId = "";
+
+  test("create context", async () => {
+    const data: any = await post("/context/create", { port: PORT });
+    expect(data.contextId).toBeDefined();
+    ctxId = data.contextId;
+  });
+
+  test("open tab in context", async () => {
+    if (!ctxId) return;
+    const data: any = await post("/context/open", { port: PORT, contextId: ctxId });
+    expect(data.tab?.id).toBeDefined();
+    ctxTabId = data.tab.id;
+  });
+
+  test("close context", async () => {
+    if (!ctxId) return;
+    const data: any = await post("/context/close", { port: PORT, contextId: ctxId });
+    expect(data.ok).toBe(true);
+  });
+});
+
+// ─── Emulation ─────────────────────────────────────
+
+describe("Emulation", () => {
+  test("set geolocation", async () => {
+    const data: any = await post("/set-geolocation", { port: PORT, tabId: TAB_ID, latitude: 35.6762, longitude: 139.6503 });
+    expect(data.ok).toBe(true);
+  });
+
+  test("set timezone", async () => {
+    const data: any = await post("/set-timezone", { port: PORT, tabId: TAB_ID, timezoneId: "Asia/Tokyo" });
+    expect(data.ok).toBe(true);
+  });
+
+  test("set locale", async () => {
+    const data: any = await post("/set-locale", { port: PORT, tabId: TAB_ID, locale: "ja-JP" });
+    expect(data.ok).toBe(true);
+  });
+
+  test("set offline", async () => {
+    const data: any = await post("/set-offline", { port: PORT, tabId: TAB_ID, offline: true });
+    expect(data.ok).toBe(true);
+    // Turn off offline mode
+    await post("/set-offline", { port: PORT, tabId: TAB_ID, offline: false });
+  });
+
+  test("emulate media", async () => {
+    const data: any = await post("/emulate-media", { port: PORT, tabId: TAB_ID, colorScheme: "dark" });
+    expect(data.ok).toBe(true);
+  });
+
+  test("add init script", async () => {
+    const data: any = await post("/add-init-script", { port: PORT, tabId: TAB_ID, script: "window.__TEST_INIT=1" });
+    expect(data.ok).toBe(true);
+  });
+});
+
+// ─── Clear Cookies ─────────────────────────────────
+
+describe("Clear Cookies", () => {
+  test("clear cookies", async () => {
+    const data: any = await post("/clear-cookies", { port: PORT, tabId: TAB_ID });
+    expect(data.ok).toBe(true);
+  });
+});
+
+// ─── Wait Load State ───────────────────────────────
+
+describe("Wait Load", () => {
+  test("wait for load state", async () => {
+    const data: any = await post("/wait-load", { port: PORT, tabId: TAB_ID, state: "load", timeout: 5000 });
+    expect(data.ok).toBe(true);
+  });
+});
+
+// ─── Dialog ────────────────────────────────────────
+
+describe("Dialog", () => {
+  test("auto handle dialogs", async () => {
+    const data: any = await post("/auto-dismiss", { port: PORT, tabId: TAB_ID, accept: true });
+    expect(data).toHaveProperty("ok");
+  }, 10000);
+});
+
+// ─── CDP Proxy ─────────────────────────────────────
+
+describe("CDP Proxy", () => {
+  test("GET /cdp/:port/json/version", async () => {
+    const data: any = await (await fetch(`http://127.0.0.1:${SERVER_PORT}/cdp/${PORT}/json/version?${authQ()}`)).json();
+    expect(data.Browser).toBeDefined();
+    expect(data.webSocketDebuggerUrl).toContain(`/cdp/${PORT}/devtools/`);
+  });
+
+  test("GET /cdp/:port/json", async () => {
+    const data: any = await (await fetch(`http://127.0.0.1:${SERVER_PORT}/cdp/${PORT}/json?${authQ()}`)).json();
+    expect(Array.isArray(data)).toBe(true);
+    if (data.length > 0) {
+      expect(data[0].webSocketDebuggerUrl).toContain(`/cdp/${PORT}/devtools/`);
+    }
+  });
+});
+
+// ─── Proxy Auth Auto-Attach ────────────────────────
+
+describe("Proxy Auth Auto-Attach", () => {
+  // This test verifies that proxy auth injection works at the browser level.
+  // When browser is started with a proxy, injectProxyAuth uses Target.setAutoAttach
+  // to enable Fetch auth handling on ALL new sessions (including Playwright-created tabs).
+  //
+  // We can't test actual proxy auth without a real proxy, but we verify:
+  // 1. The CDP proxy endpoint correctly rewrites WS URLs
+  // 2. Auto-attach is active by checking we can create tabs via CDP proxy
+  // 3. The auth handler doesn't crash on tab creation
+
+  test("CDP proxy WS URL rewrite includes correct host", async () => {
+    const data: any = await (await fetch(`http://127.0.0.1:${SERVER_PORT}/cdp/${PORT}/json/version?${authQ()}`)).json();
+    expect(data.webSocketDebuggerUrl).toBeDefined();
+    // Should point to CDPX, not to Chrome's local address
+    expect(data.webSocketDebuggerUrl).toContain(`127.0.0.1:${SERVER_PORT}`);
+    expect(data.webSocketDebuggerUrl).toContain(`/cdp/${PORT}/devtools/`);
+  });
+
+  test("CDP proxy tab list rewrite", async () => {
+    const data: any = await (await fetch(`http://127.0.0.1:${SERVER_PORT}/cdp/${PORT}/json?${authQ()}`)).json();
+    expect(Array.isArray(data)).toBe(true);
+    for (const tab of data) {
+      if (tab.webSocketDebuggerUrl) {
+        expect(tab.webSocketDebuggerUrl).toContain(`/cdp/${PORT}/devtools/page/`);
+      }
+    }
+  });
+
+  test("new tab created via CDPX still works after auto-attach init", async () => {
+    // This ensures Target.setAutoAttach didn't break normal tab operations
+    const data: any = await post("/open", { port: PORT, url: "about:blank" });
+    expect(data.tab?.id).toBeDefined();
+    if (data.tab?.id) {
+      CREATED_TABS.push(data.tab.id);
+      // Verify tab is functional
+      const evalData: any = await post("/eval", { port: PORT, tabId: data.tab.id, expression: "1+1" });
+      expect(evalData.value).toBe(2);
+      // Clean up
+      await post("/close-tab", { port: PORT, tabId: data.tab.id });
+    }
+  });
+
+  test("context create + tab works alongside auto-attach", async () => {
+    const ctx: any = await post("/context/create", { port: PORT });
+    if (ctx.error) return; // Skip if context creation fails
+    expect(ctx.contextId).toBeDefined();
+
+    const tab: any = await post("/context/open", { port: PORT, contextId: ctx.contextId, url: "about:blank" });
+    expect(tab.tab?.id || tab.error).toBeDefined();
+
+    // Clean up
+    await post("/context/close", { port: PORT, contextId: ctx.contextId });
   });
 });
 

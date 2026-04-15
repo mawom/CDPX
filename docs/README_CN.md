@@ -41,7 +41,7 @@ snapshot?content=1  →  确认结果
 
 **snapshot** 返回带 `[ref=N]` 编号的可交互元素树。读取 snapshot，按 ref 编号调用 click/type/select。不需要 CSS 选择器、XPath 或浏览器 SDK。
 
-## API 概览（~60 个端点）
+## API 概览（80+ 个端点）
 
 完整文档：`GET /api/browser/docs`
 
@@ -85,6 +85,25 @@ snapshot?content=1  →  确认结果
 | POST | `/api/browser/fetch` | 浏览器内 fetch（带 Cookie）|
 | POST | `/api/browser/mock` | 请求 mock |
 | POST | `/api/browser/batch` | 批量步骤执行 |
+| POST | `/api/browser/wait-load` | 等待页面加载状态 `{state?}` |
+
+### 模拟/仿真
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/browser/set-geolocation` | 覆盖地理位置 `{latitude, longitude}` |
+| POST | `/api/browser/set-timezone` | 覆盖时区 `{timezoneId}` |
+| POST | `/api/browser/set-locale` | 覆盖语言区域 `{locale}` |
+| POST | `/api/browser/set-permissions` | 授予权限 `{permissions: [...]}` |
+| POST | `/api/browser/set-offline` | 切换离线模式 `{offline}` |
+| POST | `/api/browser/emulate-media` | CSS 媒体仿真 `{media?, colorScheme?}` |
+| POST | `/api/browser/add-init-script` | 每次导航前注入脚本 `{script}` |
+
+### Context 隔离
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/browser/context/create` | 创建独立 BrowserContext `{port, proxy?}` |
+| POST | `/api/browser/context/open` | 在 Context 中打开标签页 `{port, contextId, url?}` |
+| POST | `/api/browser/context/close` | 关闭 Context + 所有标签页 `{port, contextId}` |
 
 ### 性能分析
 | 方法 | 路径 | 说明 |
@@ -109,6 +128,7 @@ snapshot?content=1  →  确认结果
 |------|------|------|
 | GET | `/api/browser/cookies` | 获取 Cookie |
 | POST | `/api/browser/set-cookie` | 设置 Cookie |
+| POST | `/api/browser/clear-cookies` | 清除所有 Cookie |
 | GET | `/api/browser/storage` | 读取 localStorage/sessionStorage |
 | POST | `/api/browser/storage/set` | 写入 Storage |
 | GET | `/api/browser/session/export` | 导出 Cookie + localStorage |
@@ -162,6 +182,30 @@ curl -X POST http://localhost:1024/api/browser/open \
 
 支持 `http://`、`https://`、`socks5://`、`http://user:pass@host:port`。
 
+## CDP 反向代理
+
+通过 CDPX 将 Chrome CDP 暴露到局域网，兼容 Playwright `connect_over_cdp()`：
+
+```python
+browser = playwright.chromium.connect_over_cdp("http://CDPX_IP:1024/cdp/9222?token=xxx")
+```
+
+| 路径 | 说明 |
+|------|------|
+| `GET /cdp/:port/json/version` | 浏览器信息（重写 `webSocketDebuggerUrl`）|
+| `GET /cdp/:port/json` | 标签页列表（重写 WS URL）|
+| `WS /cdp/:port/devtools/*` | 双向 CDP WebSocket 代理 |
+
+## Playwright Connect
+
+内置 Playwright 协议适配器，支持 `connect()` 直连：
+
+```python
+browser = playwright.chromium.connect("ws://CDPX_IP:1024/pw/9222?token=xxx")
+page = browser.new_context().new_page()
+page.goto("https://example.com")
+```
+
 ## WebSocket 实时推送
 
 ```js
@@ -188,18 +232,19 @@ cdpx/
 │   │   ├── monitor.ts   # 网络/Console/下载监控
 │   │   ├── storage.ts   # Cookie/Storage/Session
 │   │   ├── extension.ts # 扩展管理
-│   │   ├── proxy.ts     # Per-tab 代理
+│   │   ├── proxy.ts     # Per-tab 代理 + Context 隔离
 │   │   ├── profile.ts   # Profile 快照
 │   │   ├── perf.ts      # 性能追踪 + 覆盖率
+│   │   ├── playwright.ts # Playwright connect() 协议适配
 │   │   └── batch.ts     # 批量执行
 │   └── public/          # 管理面板
 └── browser/             # 运行时数据（gitignored）
 ```
 
-- **零 npm 依赖** — 纯 `node:http`、`node:crypto`、`node:child_process`
+- **零 npm 依赖** — 纯 Bun API + `node:crypto`、`node:child_process`
 - **原生 CDP** — 直连 Chromium WebSocket，不用 Puppeteer/Playwright
 - **Bun** — 原生 TypeScript，快速启动，内置测试
-- **模块化** — 按功能拆分为 11 个模块
+- **模块化** — 按功能拆分为 13 个模块
 
 ## 环境要求
 

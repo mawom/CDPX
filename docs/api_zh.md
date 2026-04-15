@@ -422,6 +422,125 @@ CRX URL：`{"port": 9222, "url": "https://...ext.crx", "name": "phantom"}`
 
 ---
 
+## 模拟/仿真
+
+### POST /api/browser/set-geolocation
+覆盖地理位置。
+```json
+{"port": 9222, "tabId": "ABC", "latitude": 35.6762, "longitude": 139.6503, "accuracy": 1}
+```
+
+### POST /api/browser/set-timezone
+```json
+{"port": 9222, "tabId": "ABC", "timezoneId": "Asia/Tokyo"}
+```
+
+### POST /api/browser/set-locale
+```json
+{"port": 9222, "tabId": "ABC", "locale": "ja-JP"}
+```
+
+### POST /api/browser/set-permissions
+```json
+{"port": 9222, "tabId": "ABC", "permissions": ["geolocation", "camera", "microphone"]}
+```
+
+### POST /api/browser/set-offline
+```json
+{"port": 9222, "tabId": "ABC", "offline": true}
+```
+
+### POST /api/browser/emulate-media
+```json
+{"port": 9222, "tabId": "ABC", "media": "print", "colorScheme": "dark"}
+```
+- `media`: `"screen"`、`"print"` 或 `""` 重置
+- `colorScheme`: `"light"`、`"dark"`、`"no-preference"`
+
+### POST /api/browser/add-init-script
+注入在每次导航前执行的 JavaScript。
+```json
+{"port": 9222, "tabId": "ABC", "script": "window.__INJECTED = true"}
+```
+返回 `{ok: true, identifier: "..."}`。
+
+---
+
+## Context 隔离
+
+### POST /api/browser/context/create
+创建独立 BrowserContext（可选代理）。
+```json
+{"port": 9222, "proxy": "socks5://127.0.0.1:1080"}
+```
+返回 `{contextId: "XXXXXXXX"}`。
+
+### POST /api/browser/context/open
+在指定 BrowserContext 中打开标签页。
+```json
+{"port": 9222, "contextId": "XXXXXXXX", "url": "https://example.com"}
+```
+返回 `{tab: {id, url, ...}}`。
+
+### POST /api/browser/context/close
+关闭 BrowserContext 及其所有标签页。
+```json
+{"port": 9222, "contextId": "XXXXXXXX"}
+```
+
+---
+
+## 清除 Cookie
+
+### POST /api/browser/clear-cookies
+清除所有浏览器 Cookie。
+```json
+{"port": 9222, "tabId": "ABC"}
+```
+
+---
+
+## 等待加载状态
+
+### POST /api/browser/wait-load
+等待页面加载状态（`load` 或 `domcontentloaded`）。
+```json
+{"port": 9222, "tabId": "ABC", "state": "load", "timeout": 30000}
+```
+
+---
+
+## CDP 反向代理
+
+将 Chrome 的 CDP 暴露到局域网，自动重写 `webSocketDebuggerUrl` 指向 CDPX。
+
+| 路径 | 说明 |
+|------|------|
+| `GET /cdp/:port/json/version` | 浏览器信息（重写 WS URL）|
+| `GET /cdp/:port/json` | 标签页列表（重写 WS URL）|
+| `WS /cdp/:port/devtools/*` | 双向 CDP WebSocket 代理 |
+
+Playwright 用法：
+```python
+browser = playwright.chromium.connect_over_cdp("http://CDPX_IP:1024/cdp/9222?token=xxx")
+```
+
+---
+
+## Playwright Connect
+
+内置 Playwright 协议适配器，通过 `WS /pw/:port` 连接。
+
+```python
+browser = playwright.chromium.connect("ws://CDPX_IP:1024/pw/9222?token=xxx")
+page = browser.new_context().new_page()
+page.goto("https://example.com")
+```
+
+支持：`newContext`、`newPage`、`goto`、`click`、`fill`、`type`、`press`、`evaluate`、`screenshot`、`content`、`title`、`close`、`cookies`、`waitForSelector`、`setViewportSize` 等。
+
+---
+
 ## 通用 CDP
 
 ### POST /api/browser/cdp

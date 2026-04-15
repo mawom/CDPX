@@ -1,8 +1,137 @@
 import {
-  invalidateTabCache, getTabs, cdpCommand,
+  invalidateTabCache, getTabs, cdpCommand, closeTab,
   tabProxies, tabContexts,
   type Tab,
 } from "./shared.ts";
+
+// Create an isolated BrowserContext (optional proxy)
+export async function createContext(
+  port: number,
+  opts?: { proxy?: string },
+): Promise<{ contextId?: string; error?: string }> {
+  try {
+    const vRes = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(3000) });
+    const { webSocketDebuggerUrl } = await vRes.json() as { webSocketDebuggerUrl: string };
+    if (!webSocketDebuggerUrl) return { error: "cannot get browser WS endpoint" };
+
+    const params: any = {};
+    if (opts?.proxy) {
+      try {
+        const u = new URL(opts.proxy);
+        params.proxyServer = `${u.protocol}//${u.host}`;
+      } catch {
+        params.proxyServer = opts.proxy;
+      }
+    }
+
+    const contextId = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(webSocketDebuggerUrl);
+      const timeout = setTimeout(() => { ws.close(); reject(new Error("timeout")); }, 5000);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ id: 1, method: "Target.createBrowserContext", params }));
+      };
+      ws.onmessage = (ev: MessageEvent) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          clearTimeout(timeout);
+          ws.close();
+          if (msg.result?.browserContextId) resolve(msg.result.browserContextId);
+          else reject(new Error(msg.error?.message || "failed"));
+        } catch (e) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(e instanceof Error ? e : new Error("parse error"));
+        }
+      };
+      ws.onerror = () => { clearTimeout(timeout); reject(new Error("ws error")); };
+      ws.onclose = () => { clearTimeout(timeout); reject(new Error("ws closed")); };
+    });
+
+    return { contextId };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+// Open tab in an existing BrowserContext
+export async function openTabInContext(
+  port: number,
+  contextId: string,
+  url?: string,
+): Promise<{ tab?: Tab; error?: string }> {
+  try {
+    const vRes = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(3000) });
+    const { webSocketDebuggerUrl } = await vRes.json() as { webSocketDebuggerUrl: string };
+    if (!webSocketDebuggerUrl) return { error: "cannot get browser WS endpoint" };
+
+    const targetId = await new Promise<string>((resolve, reject) => {
+      const ws = new WebSocket(webSocketDebuggerUrl);
+      const timeout = setTimeout(() => { ws.close(); reject(new Error("timeout")); }, 5000);
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          id: 1, method: "Target.createTarget",
+          params: { url: url || "about:blank", browserContextId: contextId },
+        }));
+      };
+      ws.onmessage = (ev: MessageEvent) => {
+        try {
+          const msg = JSON.parse(String(ev.data));
+          clearTimeout(timeout);
+          ws.close();
+          if (msg.result?.targetId) resolve(msg.result.targetId);
+          else reject(new Error(msg.error?.message || "failed"));
+        } catch (e) {
+          clearTimeout(timeout);
+          ws.close();
+          reject(e instanceof Error ? e : new Error("parse error"));
+        }
+      };
+      ws.onerror = () => { clearTimeout(timeout); reject(new Error("ws error")); };
+      ws.onclose = () => { clearTimeout(timeout); reject(new Error("ws closed")); };
+    });
+
+    invalidateTabCache(port);
+    const tabs = await getTabs(port);
+    const tab = tabs.find((t) => t.id === targetId) ||
+      { id: targetId, title: "", url: url || "about:blank", type: "page" } as Tab;
+    tabContexts.set(tab.id, { contextId });
+    return { tab };
+  } catch (err: any) {
+    return { error: err.message };
+  }
+}
+
+// Close a BrowserContext and all tabs in it
+export async function closeContext(
+  port: number,
+  contextId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  // Collect tab IDs first to avoid mutating map during iteration
+  const tabIds = [...tabContexts.entries()]
+    .filter(([, ctx]) => ctx.contextId === contextId)
+    .map(([tabId]) => tabId);
+  for (const tabId of tabIds) {
+    await closeTab(port, tabId);
+  }
+  // Dispose the context
+  try {
+    const vRes = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(3000) });
+    const { webSocketDebuggerUrl } = await vRes.json() as { webSocketDebuggerUrl: string };
+    if (webSocketDebuggerUrl) {
+      await new Promise<void>((resolve) => {
+        const ws = new WebSocket(webSocketDebuggerUrl);
+        const t = setTimeout(() => { try { ws.close(); } catch {} resolve(); }, 3000);
+        ws.onopen = () => {
+          ws.send(JSON.stringify({ id: 1, method: "Target.disposeBrowserContext", params: { browserContextId: contextId } }));
+        };
+        ws.onmessage = () => { clearTimeout(t); try { ws.close(); } catch {} resolve(); };
+        ws.onerror = () => { clearTimeout(t); resolve(); };
+        ws.onclose = () => { clearTimeout(t); resolve(); };
+      });
+    }
+  } catch {}
+  return { ok: true };
+}
 
 // Open tab in an isolated browser context with its own proxy
 export async function openTabWithProxy(
@@ -71,7 +200,7 @@ export async function openTabWithProxy(
       ws.onclose = () => { clearTimeout(timeout); reject(new Error("websocket closed")); };
     });
 
-    invalidateTabCache();
+    invalidateTabCache(port);
     const tabs = await getTabs(port);
     const tab = tabs.find((t) => t.id === targetId) ||
       { id: targetId, title: "", url: url || "about:blank", type: "page" } as Tab;

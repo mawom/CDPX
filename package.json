@@ -1,6 +1,6 @@
 {
   "name": "cdpx",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "AI browser automation platform — control Chromium via REST API",
   "type": "module",
   "scripts": {

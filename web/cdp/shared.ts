@@ -72,7 +72,9 @@ export function isValidPort(n: number): boolean {
 
 export function parseBody(body: string): Record<string, unknown> {
   try {
-    return JSON.parse(body || "{}");
+    const parsed = JSON.parse(body || "{}");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { __invalid: true };
+    return parsed;
   } catch {
     return { __invalid: true };
   }
@@ -86,6 +88,7 @@ export interface Instance {
   port: number;
   pid: number;
   running: boolean;
+  cdpAvailable?: boolean;
   proxy?: string;
   stealth?: boolean;
   headless?: boolean;
@@ -293,7 +296,7 @@ export async function openTab(port: number, url?: string): Promise<Tab | null> {
   invalidateTabCache(port);
   try {
     const endpoint = url
-      ? `http://127.0.0.1:${port}/json/new?${encodeURI(url)}`
+      ? `http://127.0.0.1:${port}/json/new?${url}`
       : `http://127.0.0.1:${port}/json/new`;
     const res = await fetch(endpoint, { method: "PUT", signal: AbortSignal.timeout(5000) });
     return (await res.json()) as Tab;

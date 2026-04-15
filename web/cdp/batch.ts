@@ -9,6 +9,9 @@ export function setHandleRoute(fn: typeof _handleBrowserRoute): void {
 
 const GET_ACTIONS = new Set(["status", "tabs", "screenshot", "content", "snapshot", "cookies", "extensions", "pdf", "form-state", "perf", "downloads", "html", "storage", "tab-by-name", "session/export", "network/requests", "network/response", "console/logs", "profile/list"]);
 
+// Actions that must NOT be called from batch (prevent recursive DoS and privilege escalation)
+const BLOCKED_ACTIONS = new Set(["batch", "start", "stop", "stop-all", "restart", "connect"]);
+
 export async function executeBatch(
   steps: { action: string; params: Record<string, unknown> }[],
   portOverride: number,
@@ -20,7 +23,15 @@ export async function executeBatch(
       results.push({ action: step.action || "unknown", result: { status: 400, error: "missing action" } });
       break;
     }
-    const p = { port: portOverride, tabId: tabIdOverride, ...(step.params || {}) };
+    if (BLOCKED_ACTIONS.has(step.action)) {
+      results.push({ action: step.action, result: { status: 403, error: `action "${step.action}" not allowed in batch` } });
+      break;
+    }
+    // Enforce port/tabId — step params cannot override them
+    const stepParams = { ...(step.params || {}) };
+    delete stepParams.port;
+    delete stepParams.tabId;
+    const p = { port: portOverride, tabId: tabIdOverride, ...stepParams };
     const body = JSON.stringify(p);
     // Map action to route path
     const routePath = `/api/browser/${step.action}`;

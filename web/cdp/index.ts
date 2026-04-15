@@ -12,18 +12,20 @@ import { perfTrace, getLongTasks, measureINP, startCoverage, getCoverageReport }
 import {
   clickElement, typeText, typeHuman, scrollPage, navigateTo,
   pressKey, hoverElement, mouseMove, drag,
-  waitFor, waitForCondition, selectOption,
+  waitFor, waitForCondition, waitForLoadState, selectOption,
   dismissDialog, autoHandleDialogs, uploadFile, fillForm,
   setViewport, evalScript, authFetch, enableMock,
+  setGeolocation, setPermissions, setTimezone, setLocale,
+  addInitScript, setOffline, emulateMedia,
 } from "./action.ts";
 import {
   enableNetworkMonitor, disableNetworkMonitor, getNetworkRequests, clearNetworkRequests, getResponseBody,
   enableConsoleMonitor, disableConsoleMonitor, getConsoleLogs, clearConsoleLogs,
   enableDownloadIntercept, getDownloads,
 } from "./monitor.ts";
-import { getCookies, setCookie, getStorage, setStorage, removeStorage, exportSession, importSession } from "./storage.ts";
+import { getCookies, setCookie, clearCookies, getStorage, setStorage, removeStorage, exportSession, importSession } from "./storage.ts";
 import { saveProfileSnapshot, restoreProfileSnapshot, listSnapshots } from "./profile.ts";
-import { openTabWithProxy } from "./proxy.ts";
+import { openTabWithProxy, createContext, openTabInContext, closeContext } from "./proxy.ts";
 import { executeBatch, setHandleRoute } from "./batch.ts";
 
 export { BROWSER_BIN, getStatus };
@@ -37,7 +39,7 @@ export async function handleRoute(
 
   // GET /api/browser/status
   if (method === "GET" && p === "/api/browser/status") {
-    return { instances: getStatus() };
+    return { instances: await getStatus() };
   }
 
   // GET /api/browser/tabs?port=9222
@@ -302,6 +304,82 @@ export async function handleRoute(
     if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
     if (typeof width !== "number" || typeof height !== "number" || width <= 0 || height <= 0) return { status: 400, error: "width/height must be positive numbers" };
     return await setViewport(port as number, tabId, width, height);
+  }
+
+  // POST /api/browser/set-geolocation  body: { port, tabId, latitude, longitude, accuracy? }
+  if (method === "POST" && p === "/api/browser/set-geolocation") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, latitude, longitude, accuracy } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (typeof latitude !== "number" || typeof longitude !== "number") return { status: 400, error: "latitude and longitude required" };
+    return await setGeolocation(port as number, tabId, latitude, longitude, accuracy as number | undefined);
+  }
+
+  // POST /api/browser/set-permissions  body: { port, tabId, permissions: [...] }
+  if (method === "POST" && p === "/api/browser/set-permissions") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, permissions } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (!Array.isArray(permissions)) return { status: 400, error: "permissions must be an array" };
+    return await setPermissions(port as number, tabId, permissions as string[]);
+  }
+
+  // POST /api/browser/set-timezone  body: { port, tabId, timezoneId }
+  if (method === "POST" && p === "/api/browser/set-timezone") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, timezoneId } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (!timezoneId || typeof timezoneId !== "string") return { status: 400, error: "missing timezoneId" };
+    return await setTimezone(port as number, tabId, timezoneId);
+  }
+
+  // POST /api/browser/set-locale  body: { port, tabId, locale }
+  if (method === "POST" && p === "/api/browser/set-locale") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, locale } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (!locale || typeof locale !== "string") return { status: 400, error: "missing locale" };
+    return await setLocale(port as number, tabId, locale);
+  }
+
+  // POST /api/browser/add-init-script  body: { port, tabId, script }
+  if (method === "POST" && p === "/api/browser/add-init-script") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, script } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (!script || typeof script !== "string") return { status: 400, error: "missing script" };
+    return await addInitScript(port as number, tabId, script);
+  }
+
+  // POST /api/browser/set-offline  body: { port, tabId, offline }
+  if (method === "POST" && p === "/api/browser/set-offline") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, offline } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    if (typeof offline !== "boolean") return { status: 400, error: "offline must be a boolean" };
+    return await setOffline(port as number, tabId, offline);
+  }
+
+  // POST /api/browser/emulate-media  body: { port, tabId, media?, colorScheme? }
+  if (method === "POST" && p === "/api/browser/emulate-media") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, media, colorScheme } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    return await emulateMedia(port as number, tabId, media as string | undefined, colorScheme as string | undefined);
   }
 
   // GET /api/browser/perf?port=9222&id=xxx
@@ -658,6 +736,55 @@ export async function handleRoute(
     return await setCookie(port as number, tabId, cookie);
   }
 
+  // POST /api/browser/clear-cookies  body: { port, tabId }
+  if (method === "POST" && p === "/api/browser/clear-cookies") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    return await clearCookies(port as number, tabId);
+  }
+
+  // POST /api/browser/context/create  body: { port, proxy? }
+  if (method === "POST" && p === "/api/browser/context/create") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, proxy } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    return await createContext(port as number, { proxy: proxy as string | undefined });
+  }
+
+  // POST /api/browser/context/open  body: { port, contextId, url? }
+  if (method === "POST" && p === "/api/browser/context/open") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, contextId, url } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!contextId || typeof contextId !== "string") return { status: 400, error: "missing contextId" };
+    return await openTabInContext(port as number, contextId, url as string | undefined);
+  }
+
+  // POST /api/browser/context/close  body: { port, contextId }
+  if (method === "POST" && p === "/api/browser/context/close") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, contextId } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!contextId || typeof contextId !== "string") return { status: 400, error: "missing contextId" };
+    return await closeContext(port as number, contextId);
+  }
+
+  // POST /api/browser/wait-load  body: { port, tabId, state? }
+  if (method === "POST" && p === "/api/browser/wait-load") {
+    const parsed = parseBody(body);
+    if (parsed.__invalid) return { status: 400, error: "invalid JSON body" };
+    const { port, tabId, state, timeout } = parsed;
+    if (!isValidPort(port as number)) return { status: 400, error: "invalid port" };
+    if (!tabId || typeof tabId !== "string") return { status: 400, error: "missing tabId" };
+    return await waitForLoadState(port as number, tabId, (state as "load" | "domcontentloaded") || "load", (timeout as number) || 30000);
+  }
+
   // POST /api/browser/connect  body: { port }
   if (method === "POST" && p === "/api/browser/connect") {
     const parsed = parseBody(body);
@@ -753,7 +880,7 @@ export async function handleRoute(
 
   // POST /api/browser/stop-all
   if (method === "POST" && p === "/api/browser/stop-all") {
-    const count = stopAll();
+    const count = await stopAll();
     return { stopped: count };
   }
 

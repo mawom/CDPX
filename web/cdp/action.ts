@@ -18,7 +18,7 @@ export async function clickElement(
       returnByValue: true,
     });
     const pos = result?.value;
-    if (!pos) throw new Error("element not found");
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) throw new Error("element not found");
 
     // Move mouse to element first (mimics real user behavior)
     await send("Input.dispatchMouseEvent", {
@@ -204,6 +204,7 @@ export async function pressKey(
   tabId: string,
   key: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (!key) return { ok: false, error: "key is required" };
   const mapped = KEY_MAP[key.toLowerCase()] || { key, code: `Key${key.toUpperCase()}`, keyCode: key.charCodeAt(0) };
   const res = await cdpSession(port, tabId, async ({ send }) => {
     await send("Input.dispatchKeyEvent", {
@@ -267,7 +268,7 @@ export async function drag(
   tabId: string,
   opts: { from: { x: number; y: number }; to: { x: number; y: number }; steps?: number; duration?: number },
 ): Promise<{ ok: boolean; error?: string }> {
-  const steps = opts.steps ?? 20;
+  const steps = Math.max(1, opts.steps ?? 20);
   const duration = opts.duration ?? 500;
   const stepDelay = duration / steps;
   const res = await cdpSession(port, tabId, async ({ send }) => {
@@ -376,6 +377,31 @@ export async function waitForCondition(
   }
 
   return { ok: false, error: `unknown condition type: ${type}` };
+}
+
+export async function waitForLoadState(
+  port: number,
+  tabId: string,
+  state: "load" | "domcontentloaded" = "load",
+  timeout = 30000,
+): Promise<{ ok: boolean; error?: string }> {
+  const event = state === "domcontentloaded" ? "Page.domContentEventFired" : "Page.loadEventFired";
+  const res = await cdpSession(port, tabId, async ({ send, waitEvent }) => {
+    await send("Page.enable");
+    // Check if already loaded
+    const { result } = await send("Runtime.evaluate", {
+      expression: `document.readyState`,
+      returnByValue: true,
+    });
+    const readyState = result?.value;
+    if (state === "load" && readyState === "complete") return true;
+    if (state === "domcontentloaded" && (readyState === "interactive" || readyState === "complete")) return true;
+    // Wait for event
+    await waitEvent(event, timeout);
+    return true;
+  }, timeout + 5000);
+  if (res.error) return { ok: false, error: res.error };
+  return { ok: true };
 }
 
 export async function selectOption(
@@ -596,11 +622,85 @@ export async function authFetch(
   }
 }
 
+export async function setGeolocation(
+  port: number, tabId: string, latitude: number, longitude: number, accuracy?: number,
+): Promise<{ ok: boolean; error?: string }> {
+  if (latitude < -90 || latitude > 90) return { ok: false, error: "latitude must be -90 to 90" };
+  if (longitude < -180 || longitude > 180) return { ok: false, error: "longitude must be -180 to 180" };
+  const res = await cdpCommand(port, tabId, "Emulation.setGeolocationOverride", {
+    latitude, longitude, accuracy: accuracy ?? 1,
+  });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
+export async function setPermissions(
+  port: number, tabId: string, permissions: string[],
+): Promise<{ ok: boolean; error?: string }> {
+  for (const name of permissions) {
+    const res = await cdpCommand(port, tabId, "Browser.setPermission", {
+      permission: { name }, setting: "granted",
+    });
+    if (res.error) return { ok: false, error: String(res.error) };
+  }
+  return { ok: true };
+}
+
+export async function setTimezone(
+  port: number, tabId: string, timezoneId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await cdpCommand(port, tabId, "Emulation.setTimezoneOverride", { timezoneId });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
+export async function setLocale(
+  port: number, tabId: string, locale: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await cdpCommand(port, tabId, "Emulation.setLocaleOverride", { locale });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
+export async function addInitScript(
+  port: number, tabId: string, script: string,
+): Promise<{ ok: boolean; identifier?: string; error?: string }> {
+  const res = await cdpCommand(port, tabId, "Page.addScriptToEvaluateOnNewDocument", { source: script });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true, identifier: (res.result as any)?.identifier };
+}
+
+export async function setOffline(
+  port: number, tabId: string, offline: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await cdpCommand(port, tabId, "Network.emulateNetworkConditions", {
+    offline, latency: 0, downloadThroughput: -1, uploadThroughput: -1,
+  });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
+export async function emulateMedia(
+  port: number, tabId: string, media?: string, colorScheme?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const features: { name: string; value: string }[] = [];
+  if (colorScheme) features.push({ name: "prefers-color-scheme", value: colorScheme });
+  const res = await cdpCommand(port, tabId, "Emulation.setEmulatedMedia", {
+    media: media || "", features,
+  });
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
 export async function enableMock(
   port: number,
   tabId: string,
   patterns: { urlPattern: string; method?: string; responseCode?: number; responseBody?: string; responseHeaders?: Record<string, string> }[],
 ): Promise<{ ok: boolean; error?: string }> {
+  // Validate regex patterns upfront to prevent ReDoS
+  for (const p of patterns) {
+    try { new RegExp(p.urlPattern); } catch { return { ok: false, error: `invalid regex: ${p.urlPattern}` }; }
+  }
   const res = await cdpSession(port, tabId, async ({ send }) => {
     // Persist mock across navigations via JS injection
     // (CDP Fetch.enable would die with this session, so we only use Runtime)

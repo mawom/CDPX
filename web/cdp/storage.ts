@@ -20,6 +20,15 @@ export async function setCookie(
   return { ok: (res.result as any)?.success ?? true };
 }
 
+export async function clearCookies(
+  port: number,
+  tabId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await cdpCommand(port, tabId, "Network.clearBrowserCookies");
+  if (res.error) return { ok: false, error: String(res.error) };
+  return { ok: true };
+}
+
 // --- localStorage / sessionStorage read/write ---
 export async function getStorage(
   port: number,

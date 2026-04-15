@@ -220,6 +220,211 @@ const TOOLS = [
       required: ["port", "tabId", "url"],
     },
   },
+  {
+    name: "browser_context_create",
+    description: "Create a new browser context (incognito-like isolation)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        proxy: { type: "string", description: "Proxy URL for this context" },
+      },
+      required: ["port"],
+    },
+  },
+  {
+    name: "browser_context_close",
+    description: "Close a browser context",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        contextId: { type: "string" },
+      },
+      required: ["port", "contextId"],
+    },
+  },
+  {
+    name: "browser_cookies",
+    description: "Get cookies for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_set_cookie",
+    description: "Set a cookie on a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        name: { type: "string" },
+        value: { type: "string" },
+        domain: { type: "string" },
+      },
+      required: ["port", "tabId", "name", "value", "domain"],
+    },
+  },
+  {
+    name: "browser_clear_cookies",
+    description: "Clear all cookies for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_network_enable",
+    description: "Enable network request monitoring for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_network_requests",
+    description: "Get captured network requests for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_console_enable",
+    description: "Enable console log capture for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_console_logs",
+    description: "Get captured console logs for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+      },
+      required: ["port", "tabId"],
+    },
+  },
+  {
+    name: "browser_keypress",
+    description: "Press a keyboard key (Enter, Tab, Escape, etc.)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        key: { type: "string", description: "Key name (Enter, Tab, Escape, ArrowDown, etc.)" },
+      },
+      required: ["port", "tabId", "key"],
+    },
+  },
+  {
+    name: "browser_upload",
+    description: "Upload a file to an input element",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        ref: { type: "number", description: "Element ref from snapshot" },
+        selector: { type: "string", description: "CSS selector" },
+        path: { type: "string", description: "Absolute file path to upload" },
+      },
+      required: ["port", "tabId", "path"],
+    },
+  },
+  {
+    name: "browser_set_geolocation",
+    description: "Override geolocation for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        latitude: { type: "number" },
+        longitude: { type: "number" },
+      },
+      required: ["port", "tabId", "latitude", "longitude"],
+    },
+  },
+  {
+    name: "browser_set_offline",
+    description: "Toggle offline mode for a tab",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        offline: { type: "boolean" },
+      },
+      required: ["port", "tabId", "offline"],
+    },
+  },
+  {
+    name: "browser_dialog",
+    description: "Accept or dismiss a JavaScript dialog (alert/confirm/prompt)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        accept: { type: "boolean", description: "true to accept, false to dismiss" },
+      },
+      required: ["port", "tabId", "accept"],
+    },
+  },
+  {
+    name: "browser_fill_form",
+    description: "Fill multiple form fields at once",
+    inputSchema: {
+      type: "object",
+      properties: {
+        port: { type: "number" },
+        tabId: { type: "string" },
+        fields: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              ref: { type: "number", description: "Element ref from snapshot" },
+              selector: { type: "string", description: "CSS selector (alternative to ref)" },
+              value: { type: "string" },
+              checked: { type: "boolean", description: "For checkboxes/radios" },
+            },
+            required: ["value"],
+          },
+          description: "Array of {ref, value} pairs",
+        },
+      },
+      required: ["port", "tabId", "fields"],
+    },
+  },
 ];
 
 // ─── Tool → HTTP API mapping ─────────────────────────
@@ -241,6 +446,21 @@ const TOOL_MAP: Record<string, { method: string; path: string | ((args: any) => 
   browser_wait:       { method: "POST", path: "/wait" },
   browser_scroll:     { method: "POST", path: "/scroll" },
   browser_fetch:      { method: "POST", path: "/fetch" },
+  browser_context_create:  { method: "POST", path: "/context/create" },
+  browser_context_close:   { method: "POST", path: "/context/close" },
+  browser_cookies:         { method: "GET",  path: (a) => `/cookies?port=${a.port}&id=${a.tabId}` },
+  browser_set_cookie:      { method: "POST", path: "/set-cookie" },
+  browser_clear_cookies:   { method: "POST", path: "/clear-cookies" },
+  browser_network_enable:  { method: "POST", path: "/network/enable" },
+  browser_network_requests:{ method: "GET",  path: (a) => `/network/requests?port=${a.port}&id=${a.tabId}${a.url ? "&url=" + encodeURIComponent(a.url) : ""}${a.method ? "&method=" + a.method : ""}${a.type ? "&type=" + a.type : ""}` },
+  browser_console_enable:  { method: "POST", path: "/console/enable" },
+  browser_console_logs:    { method: "GET",  path: (a) => `/console/logs?port=${a.port}&id=${a.tabId}` },
+  browser_keypress:        { method: "POST", path: "/keypress" },
+  browser_upload:          { method: "POST", path: "/upload" },
+  browser_set_geolocation: { method: "POST", path: "/set-geolocation" },
+  browser_set_offline:     { method: "POST", path: "/set-offline" },
+  browser_dialog:          { method: "POST", path: "/dismiss-dialog" },
+  browser_fill_form:       { method: "POST", path: "/fill-form" },
 };
 
 async function callTool(name: string, args: Record<string, any>): Promise<any> {
@@ -253,7 +473,7 @@ async function callTool(name: string, args: Record<string, any>): Promise<any> {
 
   // Transform args for start (port → ports array)
   if (name === "browser_start") {
-    args = { ports: [args.port || 9222], ...args };
+    args = { ...args, ports: [args.port || 9222] };
     delete args.port;
   }
 
@@ -261,11 +481,13 @@ async function callTool(name: string, args: Record<string, any>): Promise<any> {
   const userTimeout = (args.timeout as number) || 0;
   const fetchTimeout = Math.max(30000, userTimeout + 15000);
 
-  const fetchOpts: RequestInit = spec.method === "GET" ? {} : {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  };
+  const fetchOpts: RequestInit = spec.method === "GET"
+    ? {}
+    : {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(args),
+      };
   const res = await fetch(url, { ...fetchOpts, signal: AbortSignal.timeout(fetchTimeout) });
   const text = await res.text();
   try {
@@ -361,7 +583,8 @@ async function processBuffer(): Promise<void> {
       const match = header.match(/Content-Length:\s*(\d+)/i);
       if (!match) { buffer = buffer.subarray(headerEnd + 4); continue; }
 
-      const contentLength = parseInt(match[1]);
+      const contentLength = parseInt(match[1], 10);
+      if (!Number.isFinite(contentLength) || contentLength < 0 || contentLength > 10_000_000) break;
       const bodyStart = headerEnd + 4;
       if (buffer.length < bodyStart + contentLength) break;
 
